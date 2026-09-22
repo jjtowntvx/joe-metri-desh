@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Joe Metri Desh — Geometry Runner</title>
+  <style>
+    :root { color-scheme: dark; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    * { box-sizing: border-box; }
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; overflow: hidden; background: #08091b; color: #fff; }
+    .wrap { width: min(1100px, 100vw); padding: 18px; }
+    header { display: flex; align-items: center; justify-content: space-between; gap: 16px; margin-bottom: 12px; }
+    h1 { margin: 0; font-size: clamp(1.25rem, 3vw, 2rem); letter-spacing: .08em; text-transform: uppercase; }
+    .subtitle { color: #8e94bb; font-size: .82rem; margin-top: 4px; }
+    .stats { display: flex; gap: 10px; flex-wrap: wrap; justify-content: flex-end; }
+    .pill { border: 1px solid #2b3265; border-radius: 999px; padding: 7px 12px; color: #cbd0ff; background: #111532; font-size: .8rem; }
+    canvas { display: block; width: 100%; aspect-ratio: 16 / 9; border: 1px solid #323c77; border-radius: 14px; background: #101536; box-shadow: 0 22px 70px #02030c, inset 0 0 40px #242b71; touch-action: none; }
+    .help { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; color: #aab0d8; font-size: .82rem; }
+    kbd { color: #fff; background: #202754; border: 1px solid #414b86; border-bottom-width: 2px; border-radius: 5px; padding: 2px 6px; }
+    button { cursor: pointer; border: 1px solid #5664c4; border-radius: 8px; padding: 8px 13px; color: #fff; background: #3646a6; font-weight: 700; }
+    button:hover { background: #4657c7; }
+    @media (max-width: 620px) { .wrap { padding: 10px; } header { align-items: flex-start; flex-direction: column; } .stats { justify-content: flex-start; } .help { align-items: flex-start; flex-direction: column; } }
+  </style>
+</head>
+<body>
+  <main class="wrap">
+    <header>
+      <div><h1>Joe Metri Desh</h1><div class="subtitle">Geometry Runner · reach the finish portal</div></div>
+      <div class="stats"><span class="pill" id="mode">MODE: CUBE</span><span class="pill" id="score">DISTANCE: 0m</span><button id="restart">Restart</button></div>
+    </header>
+    <canvas id="game" aria-label="2D platformer game"></canvas>
+    <div class="help"><span><kbd>Space</kbd> / <kbd>↑</kbd> jump or use your mouse/touch · avoid spikes · enter portals to change mode</span><span id="message">Good luck!</span></div>
+  </main>
+  <script>
+    const canvas = document.querySelector('#game'), ctx = canvas.getContext('2d');
+    const modeEl = document.querySelector('#mode'), scoreEl = document.querySelector('#score'), messageEl = document.querySelector('#message');
+    let W = 960, H = 540, dpr = 1, last = 0, playing = true, pressed = false;
+    const groundY = () => H * .78, finishX = 6800;
+    const player = { x: 130, y: 0, size: 34, vy: 0, gravity: 1450, grounded: false, rotation: 0, mode: 'cube', flipped: false, color: '#62f4ef' };
+    let camera = 0, distance = 0, particles = [], sparks = [], best = Number(localStorage.getItem('joe-metri-best') || 0);
+    const portals = [
+      { x: 940, mode: 'ship', color: '#ff6cdb', label: 'SHIP' }, { x: 2000, mode: 'ball', color: '#ffd166', label: 'BALL' },
+      { x: 3050, mode: 'wave', color: '#7bff72', label: 'WAVE' }, { x: 4100, mode: 'ufo', color: '#9b8cff', label: 'UFO' },
+      { x: 5200, mode: 'cube', color: '#62f4ef', label: 'CUBE' }
+    ];
+    const spikes = [];
+    for (let x = 560; x < finishX - 250; x += 300 + ((x / 100) % 3) * 55) spikes.push({ x, count: x % 2 ? 1 : 2 });
+    const platforms = [{x: 0, y: 0, w: finishX + 500, h: 100}];
+    function resize() { const r = canvas.getBoundingClientRect(); dpr = Math.min(devicePixelRatio || 1, 2); W = r.width; H = r.width * 9 / 16; canvas.width = W*dpr; canvas.height = H*dpr; ctx.setTransform(dpr,0,0,dpr,0,0); if (!player.y) player.y = groundY() - player.size; }
+    addEventListener('resize', resize); resize();
+    const down = e => { if (e.code === 'Space' || e.code === 'ArrowUp' || e.type === 'pointerdown') { e.preventDefault(); pressed = true; if (!playing) reset(); } };
+    const up = e => { if (e.code === 'Space' || e.code === 'ArrowUp' || e.type === 'pointerup' || e.type === 'pointercancel') { pressed = false; } };
+    addEventListener('keydown', down); addEventListener('keyup', up); canvas.addEventListener('pointerdown', down); canvas.addEventListener('pointerup', up); canvas.addEventListener('pointercancel', up); document.querySelector('#restart').onclick = reset;
+    function reset() { Object.assign(player, { x:130, y:groundY()-player.size, vy:0, grounded:false, rotation:0, mode:'cube', flipped:false, color:'#62f4ef' }); camera=0; distance=0; particles=[]; sparks=[]; playing=true; messageEl.textContent='Good luck!'; updateHud(); }
+    function portalFor(x) { return portals.find(p => Math.abs(x-p.x) < 35); }
+    function switchMode(m) { player.mode=m; player.vy=0; player.flipped=false; player.color={cube:'#62f4ef',ship:'#ff6cdb',ball:'#ffd166',wave:'#7bff72',ufo:'#9b8cff'}[m]; for(let i=0;i<18;i++) sparks.push({x:player.x,y:player.y+player.size/2,vx:(Math.random()-.5)*240,vy:(Math.random()-.5)*240,life:.6,color:player.color}); messageEl.textContent = m.toUpperCase() + ' MODE'; updateHud(); }
+    function updateHud() { modeEl.textContent='MODE: '+player.mode.toUpperCase(); scoreEl.textContent='DISTANCE: '+Math.floor(distance)+'m · BEST: '+best+'m'; }
+    function die() { if (!playing) return; playing=false; messageEl.textContent='CRASHED! Press Space, click, or Restart to try again.'; for(let i=0;i<35;i++) sparks.push({x:player.x,y:player.y,vx:(Math.random()-.5)*500,vy:(Math.random()-.5)*500,life:1,color:'#ff426d'}); if(distance>best){best=Math.floor(distance);localStorage.setItem('joe-metri-best',best);} updateHud(); }
+    function rectHit(a,b) { return a.x < b.x+b.w && a.x+a.w > b.x && a.y < b.y+b.h && a.y+a.h > b.y; }
+    function update(dt) {
+      if (!playing) { updateParticles(dt); return; }
+      const floor = groundY()-player.size; const p = player;
+      if (p.mode==='cube') { if (pressed && p.grounded) { p.vy=-570; p.grounded=false; } p.vy += p.gravity*dt; p.y += p.vy*dt; if(p.y>=floor){p.y=floor;p.vy=0;p.grounded=true;} p.rotation += (p.grounded?0:5.5)*dt; }
+      if (p.mode==='ship') { p.vy += (pressed?-930:930)*dt; p.vy *= Math.pow(.05,dt); p.y += p.vy*dt; p.rotation=p.vy*.001; }
+      if (p.mode==='wave') { p.vy = (pressed?-650:650); p.y += p.vy*dt; p.rotation = p.vy>0?.35:-.35; }
+      if (p.mode==='ufo') { p.vy += 1350*dt; if(pressed){p.vy=-440; pressed=false;} p.y += p.vy*dt; p.rotation=p.vy*.0008; }
+      if (p.mode==='ball') { if(pressed){p.flipped=!p.flipped; pressed=false;} p.vy += (p.flipped?-900:900)*dt; p.y+=p.vy*dt; p.rotation += (p.flipped?-7:7)*dt; }
+      if (p.mode==='ship'||p.mode==='wave'||p.mode==='ufo'||p.mode==='ball') { if(p.y<40){p.y=40;p.vy=Math.max(0,p.vy);} if(p.y>groundY()-p.size){p.y=groundY()-p.size;p.vy=Math.min(0,p.vy);} }
+      p.x += 225*dt; distance=Math.max(distance,(p.x-130)/10); camera=Math.max(0,p.x-W*.27);
+      const portal=portalFor(p.x); if(portal && p.mode!==portal.mode) switchMode(portal.mode);
+      const hitbox={x:p.x+5,y:p.y+5,w:p.size-10,h:p.size-10};
+      for(const s of spikes){ for(let i=0;i<s.count;i++){const b={x:s.x+i*26,y:groundY()-25,w:24,h:25};if(rectHit(hitbox,b))die();} }
+      if(p.x>finishX){playing=false;messageEl.textContent='FINISH! You beat the course — press Space to run again.'; if(distance>best){best=Math.floor(distance);localStorage.setItem('joe-metri-best',best);} updateHud();}
+      if(Math.random()<dt*16) particles.push({x:p.x,y:p.y+p.size/2,vx:-90,vy:(Math.random()-.5)*40,life:.45,color:p.color}); updateParticles(dt); updateHud();
+    }
+    function updateParticles(dt){ for(const a of [...particles,...sparks]){a.x+=a.vx*dt;a.y+=a.vy*dt;a.vy+=a===sparks[0]?0:80*dt;a.life-=dt;} particles=particles.filter(a=>a.life>0);sparks=sparks.filter(a=>a.life>0); }
+    function draw(){ ctx.clearRect(0,0,W,H); const gy=groundY(); const grad=ctx.createLinearGradient(0,0,0,H);grad.addColorStop(0,'#101742');grad.addColorStop(1,'#1a0e36');ctx.fillStyle=grad;ctx.fillRect(0,0,W,H);
+      ctx.save();ctx.translate(-camera,0); for(let i=0;i<18;i++){ctx.fillStyle=`rgba(110,125,255,${.04+(i%3)*.02})`;ctx.fillRect(i*530-((camera*.1)%530),80+(i%4)*55,320,2);} ctx.fillStyle='#20286a';ctx.fillRect(camera,gy,W+camera,H-gy);ctx.fillStyle='#5969d8';ctx.fillRect(camera,gy,W+camera,4);
+      for(const s of spikes){for(let i=0;i<s.count;i++){ctx.beginPath();ctx.moveTo(s.x+i*26,gy);ctx.lineTo(s.x+12+i*26,gy-26);ctx.lineTo(s.x+24+i*26,gy);ctx.closePath();ctx.fillStyle='#ff426d';ctx.fill();}}
+      for(const po of portals){ctx.save();ctx.translate(po.x,gy-150);ctx.strokeStyle=po.color;ctx.shadowBlur=22;ctx.shadowColor=po.color;ctx.lineWidth=8;ctx.beginPath();ctx.ellipse(0,0,29,72,0,0,Math.PI*2);ctx.stroke();ctx.shadowBlur=0;ctx.fillStyle=po.color;ctx.font='bold 12px system-ui';ctx.textAlign='center';ctx.fillText(po.label,0,-88);ctx.restore();}
+      ctx.strokeStyle='#8d98ff';ctx.lineWidth=3;ctx.setLineDash([8,14]);ctx.beginPath();ctx.moveTo(finishX,gy-230);ctx.lineTo(finishX,gy);ctx.stroke();ctx.setLineDash([]);ctx.fillStyle='#d8dcff';ctx.font='bold 14px system-ui';ctx.fillText('FINISH',finishX-25,gy-245);
+      for(const a of particles){ctx.globalAlpha=Math.max(0,a.life*2);ctx.fillStyle=a.color;ctx.fillRect(a.x,a.y,5,5);}for(const a of sparks){ctx.globalAlpha=Math.max(0,a.life);ctx.fillStyle=a.color;ctx.fillRect(a.x,a.y,6,6);}ctx.globalAlpha=1;
+      ctx.save();ctx.translate(player.x+player.size/2,player.y+player.size/2);ctx.rotate(player.rotation);ctx.shadowBlur=18;ctx.shadowColor=player.color;ctx.fillStyle=player.color;ctx.fillRect(-player.size/2,-player.size/2,player.size,player.size);ctx.shadowBlur=0;ctx.fillStyle='#101536';ctx.fillRect(-8,-7,5,5);ctx.fillRect(4,-7,5,5);ctx.restore();ctx.restore();
+      if(!playing){ctx.fillStyle='rgba(4,5,18,.62)';ctx.fillRect(0,0,W,H);ctx.fillStyle='#fff';ctx.textAlign='center';ctx.font='800 30px system-ui';ctx.fillText(distance>finishX/10?'COURSE COMPLETE':'GAME OVER',W/2,H*.43);ctx.font='15px system-ui';ctx.fillStyle='#c5caff';ctx.fillText('Press Space or click to restart',W/2,H*.51);ctx.textAlign='left';}
+    }
+    function loop(t){const dt=Math.min((t-last)/1000,.033);last=t;update(dt);draw();requestAnimationFrame(loop);} requestAnimationFrame(loop);
+  </script>
+</body>
+</html>
